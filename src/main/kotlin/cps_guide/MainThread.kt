@@ -1,6 +1,7 @@
 package cps_guide
 
 import java.lang.AssertionError
+import java.lang.IllegalArgumentException
 import kotlin.system.measureTimeMillis
 
 /**
@@ -75,6 +76,8 @@ class NonBlockingFunction<T>(
 class Promise<T>(
     private var worker: Thread? = null,
     private var result: T? = null,
+    private var isError: Boolean? = true,
+    private var errorHandler: ((e: Exception) -> T)? = null,
     private val originFunction: () -> T,
 ) {
 
@@ -82,7 +85,12 @@ class Promise<T>(
         if (result != null) throw AssertionError("Result is must be null")
 
         worker = Thread {
-            result = originFunction.invoke()
+            result = try {
+                originFunction.invoke()
+            } catch (e: java.lang.Exception) {
+                isError = true
+                errorHandler?.let { it(e) } ?: throw e
+            }
         }
 
         worker?.start()
@@ -91,6 +99,11 @@ class Promise<T>(
     fun then(callback: (T) -> Any): Promise<T> {
         worker?.join()
         callback(result!!)
+        return this
+    }
+
+    fun onError(handler: (e: Exception) -> T): Promise<T> {
+        this.errorHandler = handler
         return this
     }
 }
@@ -123,26 +136,15 @@ fun main() {
 
        val promise2 = Promise<Int> {
            Thread.sleep(2000)
+           throw IllegalArgumentException("TEST Exception!")
            return@Promise 2
+       }.onError { err ->
+           println(err.message)
+           return@onError -1
        }
 
-       promise1.then { promise1Result ->
-           println(promise1Result)
-           val innerPromise1 = Promise<String> {
-               Thread.sleep(500)
-               return@Promise "Hello, "
-           }
-
-           innerPromise1.then { innerPromise1Result1 ->
-               val innerPromise2 = Promise<String> {
-                   Thread.sleep(500)
-                   return@Promise "Roach!! "
-               }
-
-               innerPromise2.then {innerPromise2Result ->
-                   println(innerPromise1Result1 + innerPromise2Result)
-               }
-           }
+       promise1.then {
+           println(it)
        }
 
        promise2.then {

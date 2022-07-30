@@ -417,8 +417,144 @@ Hello, Roach!!
 Execution Time : 2025
 ```
 
+## 에러 처리 (Exception Handling)
+
+이렇게 NonBlocking 형태로 코드를 작성하다보면 Error 처리가 힘들어지게 된다. 그 이유는 내가 실행하고자 하는 코드가 
+현재 Context 에서 실행되지 않기 때문이다. 말이 어려워서 그런데 코드로 한번보면 이해가 빠르다. 아래 코드를 보기전에 
+자신이 생각했을때 promise2 의 function 에서 에러가 난다면 어떻게 Controll 해야 할까를 생각해보자.
+
+```kotlin
+fun main() {
+
+   val executionTime = measureTimeMillis {
+       val promise1 = Promise<Int> {
+           Thread.sleep(1000)
+           return@Promise 1
+       }
+
+       val promise2 = Promise<Int> {
+           Thread.sleep(2000)
+           throw IllegalArgumentException("TEST Exception!")
+           return@Promise 2
+       }
+
+       promise1.then {
+           println(it)
+       }
+
+       try {
+           promise2.then {
+               println(it)
+           }
+       } catch (e: Exception) {
+           println(e.message)
+       }
+   }
+
+    println("Execution Time : $executionTime")
+}
+```
+
+만약 위와 같이 Exception Handling 을 할것이라고 생각했다면 생각처럼 Exception Handling 이 되지 않을 것이다. 이렇게 
+함수를 실행시키면 결과는 아래와 같다.
+
+```kotlin
+1
+Exception in thread "Thread-1" java.lang.IllegalArgumentException: TEST Exception!
+	at cps_guide.MainThreadKt$main$executionTime$1$promise2$1.invoke(MainThread.kt:127)
+	at cps_guide.MainThreadKt$main$executionTime$1$promise2$1.invoke(MainThread.kt:125)
+	at cps_guide.Promise._init_$lambda-0(MainThread.kt:86)
+	at java.base/java.lang.Thread.run(Thread.java:829)
+null
+Execution Time : 2011
+```
+
+그 이유는 Promise 안의 생성자에서 함수가 실행되기 때문이다. 보통 JavaScript 나 다른 언어에서는 이를 해결하기 위해 
+Error 를 핸들링 할 방법을 넣게 된다. `onError((err) -> Unit)` 과 같은 방식으로 말이다. 우리도 이 방법을 사용할 수 있도록 개선해보자.
+
+```kotlin
+class Promise<T>(
+    private var worker: Thread? = null,
+    private var result: T? = null,
+    private var isError: Boolean? = true,
+    private var errorHandler: ((e: Exception) -> T)? = null,
+    private val originFunction: () -> T,
+) {
+
+    init {
+        if (result != null) throw AssertionError("Result is must be null")
+
+        worker = Thread {
+            result = try {
+                originFunction.invoke()
+            } catch (e: java.lang.Exception) {
+                isError = true
+                errorHandler?.let { it(e) } ?: throw e
+            }
+        }
+
+        worker?.start()
+    }
+
+    fun then(callback: (T) -> Any): Promise<T> {
+        worker?.join()
+        callback(result!!)
+        return this
+    }
+
+    fun onError(handler: (e: Exception) -> T): Promise<T> {
+        this.errorHandler = handler
+        return this
+    }
+}
+```
+
+위와 같이 errorHandler 를 직접 함수쪽에 넣어서 활용할 수 있도록 했다. 이 코드를 활용하면 아래와 같은 방법으로 Handler 를 추가 할 수 있을 것이다.
+
+```kotlin
+fun main() {
+
+   val executionTime = measureTimeMillis {
+       val promise1 = Promise<Int> {
+           Thread.sleep(1000)
+           return@Promise 1
+       }
+
+       val promise2 = Promise<Int> {
+           Thread.sleep(2000)
+           throw IllegalArgumentException("TEST Exception!")
+           return@Promise 2
+       }.onError { err ->
+           println(err.message)
+           return@onError -1
+       }
+
+       promise1.then {
+           println(it)
+       }
+
+       promise2.then {
+           println(it)
+       }
+   }
+
+    println("Execution Time : $executionTime")
+}
+```
+
+실행하게 되면 결과는 아래와 같다
+
+```shell
+1
+TEST Exception!
+-1
+Execution Time : 2010
+```
+
 ## 글 쓰면서 
 
 글을 읽는 사람의 수준에 따라서 이 글이 엄청 어렵게 읽힐 수도 있고, 누군가 에겐 정말 쉬운 내용을 가르치고 있는 것일 수 있다고 생각된다. 
 개인적으로 다양한 언어에서 공통적으로 사용되는 Style 은 그렇게 발전될수 밖에 없는 역사가 있다고 생각하는데,
-이번 글에서는 CPS 패턴에 대해서 내가 아는 한도에서 최대한 코드로 보여줘서 표현하려고 노력했다.
+이번 글에서는 CPS 패턴에 대해서 내가 아는 한도에서 최대한 코드로 보여줘서 표현하려고 노력했다. 
+
+**개인적으로 틀린 내용이 있을 거라고 생각되는데, 이 지식에 대해서 조금 더 잘 아시는 분이라면 피드백을 주시면 감사 할 것 같습니다 :)**
