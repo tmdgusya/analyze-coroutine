@@ -1,5 +1,6 @@
 package cps_guide
 
+import java.lang.AssertionError
 import kotlin.system.measureTimeMillis
 
 /**
@@ -57,6 +58,7 @@ class Function<T>(
 class NonBlockingFunction<T>(
     private val control: Control,
     private val method: () -> T,
+    private val callback: (T) -> Promise<T>
 ) {
     fun execute(): T {
         // 일단 Return 가능
@@ -66,6 +68,30 @@ class NonBlockingFunction<T>(
         val result = method.invoke()
 
         return result
+    }
+}
+
+
+class Promise<T>(
+    private var worker: Thread? = null,
+    private var result: T? = null,
+    private val originFunction: () -> T,
+) {
+
+    init {
+        if (result != null) throw AssertionError("Result is must be null")
+
+        worker = Thread {
+            result = originFunction.invoke()
+        }
+
+        worker?.start()
+    }
+
+    fun then(callback: (T) -> Any): Promise<T> {
+        worker?.join()
+        callback(result!!)
+        return this
     }
 }
 
@@ -88,21 +114,41 @@ class Control(
 }
 
 fun main() {
-    val mainThread = MainThread()
 
-    val executionTime = measureTimeMillis {
-        while (mainThread.isCanNotReadNextLine()) {
+   val executionTime = measureTimeMillis {
+       val promise1 = Promise<Int> {
+           Thread.sleep(1000)
+           return@Promise 1
+       }
 
-            Thread {
-                NonBlockingFunction(mainThread.giveOwnerShip()) {
-                    println("Do some work...")
-                    Thread.sleep(500)
-                }.execute()
-            }.start()
-        }
+       val promise2 = Promise<Int> {
+           Thread.sleep(2000)
+           return@Promise 2
+       }
 
-        mainThread.goNextLine()
-    }
+       promise1.then { promise1Result ->
+           println(promise1Result)
+           val innerPromise1 = Promise<String> {
+               Thread.sleep(500)
+               return@Promise "Hello, "
+           }
+
+           innerPromise1.then { innerPromise1Result1 ->
+               val innerPromise2 = Promise<String> {
+                   Thread.sleep(500)
+                   return@Promise "Roach!! "
+               }
+
+               innerPromise2.then {innerPromise2Result ->
+                   println(innerPromise1Result1 + innerPromise2Result)
+               }
+           }
+       }
+
+       promise2.then {
+           println(it)
+       }
+   }
 
     println("Execution Time : $executionTime")
 }

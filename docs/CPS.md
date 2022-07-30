@@ -294,5 +294,131 @@ Execution Time : 3
 
 > **함수형 프로그래밍에서 Continuation 형태로 제어권을 명시적으로 넘기는 것**
 
-그럼 우리는 Continuation 이 뭔지 생각해 볼 필요가 있다.  
+그럼 우리는 Continuation 이 뭔지 생각해 볼 필요가 있다. **우리가 생각해 봤을때, 제어권을 명시적으로 넘기는 녀석은 Control Class 
+임을 알 수 있다. 즉, Control 이 우리의 Continuation** 이다. 근데 우리는 단순히 코드의 제어권을 넘기는 것 뿐만 아니라, 이제는 
+기존과 똑같이 Blocking 시간을 최소화 하면서 함수의 결과값도 받아보고 싶다고 해보자. 그렇다면 어떻게 해야 할까? 
 
+JavaScript 에서는 이를 보통 Callback Function 으로 처리하기도 한다. 어떻게 Callback 으로 이를 구현할 수 있는지는 한번 코드로 
+알아보자.
+
+```kotlin
+class Promise<T>(
+    private var worker: Thread? = null,
+    private var result: T? = null,
+    private val originFunction: () -> T,
+) {
+
+    init {
+        if (result != null) throw AssertionError("Result is must be null")
+
+        worker = Thread {
+            result = originFunction.invoke()
+        }
+
+        worker?.start()
+    }
+
+    fun then(callback: (T) -> Any): Promise<T> {
+        worker?.join()
+        callback(result!!)
+        return this
+    }
+}
+```
+
+Promise 코드를 보면 **내가 처음에 비동기로 돌리고 싶은 함수(originalFunction)** 를 넣어주게 되면 이를 다른 Thread 를 통해 비동기로 돌려준다. 
+다만 이제 결과값을 then 을 통해 받을 수 있는데, then 의 경우에는 함수의 결과값(T) 를 통해 하고자 하는 callback Function 을 받는다. 
+이를 통해 아래 코드와 같이 async-nonblocking 로 코드를 실행하는 것이 가능하다.
+
+```kotlin
+fun main() {
+
+   val executionTime = measureTimeMillis {
+       val promise1 = Promise<Int> {
+           Thread.sleep(1000)
+           return@Promise 1
+       }
+
+       val promise2 = Promise<Int> {
+           Thread.sleep(2000)
+           return@Promise 2
+       }
+
+       promise1.then {
+           println(it)
+       }
+
+       promise2.then {
+           println(it)
+       }
+   }
+
+    println("Execution Time : $executionTime")
+}
+```
+
+실행시간은 몇초가 나오게 될까? 2초가 나오게 된다.
+
+```shell
+Execution Time : 2009
+```
+
+이 쯤 되면, 왜 JavaScript 에서 비동기 함수를 처리할때 Callback 지옥에 빠졌는지 알 수 있을 것이다. Callback 지옥의 예시를 
+재밌는 코드로 보여주면 아래와 같이 적어볼 수 있을 것 이다.
+
+```kotlin
+fun main() {
+
+   val executionTime = measureTimeMillis {
+       val promise1 = Promise<Int> {
+           Thread.sleep(1000)
+           return@Promise 1
+       }
+
+       val promise2 = Promise<Int> {
+           Thread.sleep(2000)
+           return@Promise 2
+       }
+
+       promise1.then { promise1Result ->
+           println(promise1Result)
+           val innerPromise1 = Promise<String> {
+               Thread.sleep(500)
+               return@Promise "Hello, "
+           }
+
+           innerPromise1.then { innerPromise1Result1 ->
+               val innerPromise2 = Promise<String> {
+                   Thread.sleep(500)
+                   return@Promise "Roach!! "
+               }
+
+               innerPromise2.then {innerPromise2Result ->
+                   println(innerPromise1Result1 + innerPromise2Result)
+               }
+           }
+       }
+
+       promise2.then {
+           println(it)
+       }
+   }
+
+    println("Execution Time : $executionTime")
+}
+```
+
+이 함수의 실행이 오래걸릴 것 같아 보이지만, 오래 걸리지 않는다. 왜냐면 NonBlocking 으로 진행되기 때문이다.
+
+```shell
+1
+Hello, Roach!! 
+2
+Execution Time : 2025
+```
+
+## 글 쓰면서 
+
+글을 읽는 사람의 수준에 따라서 이 글이 엄청 어렵게 읽힐 수도 있고, 누군가 에겐 정말 쉬운 내용을 가르치고 있는 것일 수 있다고 생각된다. 
+개인적으로 다양한 언어에서 공통적으로 사용되는 Style 은 그렇게 발전될수 밖에 없는 역사가 있다고 생각하는데,
+이번 글에서는 CPS 패턴에 대해서 내가 아는 한도에서 최대한 코드로 보여줘서 표현하려고 노력했다.
