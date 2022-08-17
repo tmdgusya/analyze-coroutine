@@ -5,10 +5,4 @@ import kotlinx.coroutines.runBlocking
 
 class Test {
 
-    fun main() {
-        CoroutineScope {
-
-        }
-    }
-
 }

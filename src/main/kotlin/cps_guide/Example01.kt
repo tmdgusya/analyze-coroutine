@@ -4,7 +4,7 @@ import java.io.File
 import java.io.FileReader
 import java.lang.IllegalArgumentException
 
-fun main() {
+suspend fun main() {
 
     println("Current Code Reader Thread : ${Thread.currentThread().name}")
 
@@ -45,5 +45,11 @@ fun main() {
 
     println("Current Code Reader Thread : ${Thread.currentThread().name} .. Succeed LineNumber Five")
 
+    test()
 
+
+}
+
+suspend fun test() {
+    println("123213123123")
 }
